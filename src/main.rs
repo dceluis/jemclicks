@@ -1,13 +1,26 @@
-// we import the necessary modules (only the core X module in this application).
+extern crate yaml_rust;
+
+use yaml_rust::{YamlLoader, YamlEmitter};
+
 use std::{thread, time::Duration};
 use std::sync::RwLock;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::collections::HashSet;
+use clap::Parser;
 
 use evdev_rs::enums::{BusType, EventCode, EventType, EV_KEY, EV_REL, EV_SYN};
 use evdev_rs::{Device, DeviceWrapper, InputEvent, UInputDevice, UninitDevice, TimeVal};
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[arg(short, long)]
+    config: Option<String>,
+
+    #[arg(short, long)]
+    device: Option<String>,
+}
 
 fn pick_device() -> evdev::Device {
     use std::io::prelude::*;
@@ -16,10 +29,10 @@ fn pick_device() -> evdev::Device {
     let mut devices = evdev::enumerate().map(|t| t.1).collect::<Vec<_>>();
     // readdir returns them in reverse order from their eventN names for some reason
     devices.reverse();
-    let mut args = std::env::args_os();
-    args.next();
-    if let Some(dev_file) = args.next() {
-        chosen = dev_file.into_string().unwrap();
+
+    let cli = Cli::parse();
+    if let Some(dev_file) = cli.device {
+        chosen = dev_file;
     } else {
         for (i, d) in devices.iter().enumerate() {
             println!("{}: {}", i, d.name().unwrap_or("Unnamed device"));
@@ -28,6 +41,7 @@ fn pick_device() -> evdev::Device {
         let _ = std::io::stdout().flush();
         std::io::stdin().read_line(&mut chosen).unwrap();
     }
+
     println!("Using device {}", chosen);
     let n = chosen.trim().parse::<usize>().unwrap();
     devices.into_iter().nth(n).unwrap()
@@ -185,8 +199,16 @@ fn write_event(device: &UInputDevice, event: InputEvent) {
 
 
 fn main() -> std::io::Result<()> {
+    let cli = Cli::parse();
+
+    println!("config: {:?}", cli.config.as_deref());
+    println!("device: {:?}", cli.device.as_deref());
+
+    let config_str = std::fs::read_to_string(cli.config.as_deref().unwrap_or("jemclicks.yaml"))?;
+    let config = YamlLoader::load_from_str(&config_str).unwrap_or(vec![]);
+
     let mut d = pick_device();
-    println!("Keyboard: {}", d);
+    // println!("Keyboard: {}", d);
 
     let enabled_lock = Arc::new(Mutex::new(false));
     let events_queue: Vec<(u16, i32)> = Vec::new();
@@ -240,8 +262,8 @@ fn main() -> std::io::Result<()> {
     let speed_increment = (mouse_speed as f32 / steps as f32) as i32;
 
     let mut pressed_keys = HashSet::new();
-    let mut x = 0;
-    let mut y = 0;
+    let mut x: i32;
+    let mut y: i32;
 
     let mut up_speed = 0;
     let mut down_speed = 0;
