@@ -1,0 +1,13 @@
+# Keycodes are defined in /usr/include/linux/input-event-codes.h
+
+ENABLE_KEY:
+DISABLE_KEY:
+
+UP_KEY:
+DOWN_KEY:
+LEFT_KEY:
+RIGHT_KEY:
+
+LEFT_BUTTON:
+MIDDLE_BUTTON:
+RIGHT_BUTTON:

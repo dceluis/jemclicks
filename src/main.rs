@@ -1,6 +1,6 @@
 extern crate yaml_rust;
 
-use yaml_rust::{YamlLoader, YamlEmitter};
+use yaml_rust::{YamlLoader};
 
 use std::{thread, time::Duration};
 use std::sync::RwLock;
@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use clap::Parser;
 
 use evdev_rs::enums::{BusType, EventCode, EventType, EV_KEY, EV_REL, EV_SYN};
-use evdev_rs::{Device, DeviceWrapper, InputEvent, UInputDevice, UninitDevice, TimeVal};
+use evdev_rs::{DeviceWrapper, InputEvent, UInputDevice, UninitDevice, TimeVal};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -47,7 +47,7 @@ fn pick_device() -> evdev::Device {
     devices.into_iter().nth(n).unwrap()
 }
 
-fn calc_directions(keycodes: &HashSet<u16>) -> (bool, bool, bool, bool) {
+fn detect_directions(keycodes: &HashSet<u16>, up_key: &u16, down_key: &u16, left_key: &u16, right_key: &u16) -> (bool, bool, bool, bool) {
     // Keycodes are defined in /usr/include/linux/input-event-codes.h
     let mut up = false;
     let mut down = false;
@@ -56,40 +56,28 @@ fn calc_directions(keycodes: &HashSet<u16>) -> (bool, bool, bool, bool) {
 
     for keycode in keycodes {
         match keycode {
-            72 => up = true,
-            75 => left = true,
-            80 => down = true,
-            77 => right = true,
-            _ => {}
+            k if k == up_key => up = true,
+            k if k == down_key => down = true,
+            k if k == left_key => left = true,
+            k if k == right_key => right = true,
+            _ => (),
         }
     }
 
     (up, down, left, right)
 }
 
-fn calc_mouse(keycodes: &HashSet<u16>) -> (bool, bool, bool) {
-    // 71 = KEY_KP7
-    // 72 = KEY_KP8
-    // 73 = KEY_KP9
-    // 75 = KEY_KP4
-    // 76 = KEY_KP5
-    // 77 = KEY_KP6
-    // 79 = KEY_KP1
-    // 80 = KEY_KP2
-    // 81 = KEY_KP3
-    // 82 = KEY_KP0
-
+fn detect_mouse(keycodes: &HashSet<u16>, left_button: &u16, right_button: &u16, middle_button: &u16) -> (bool, bool, bool) {
     let mut one = false;
     let mut two = false;
     let mut three = false;
 
     for keycode in keycodes {
         match keycode {
-            79 => one = true, // KEY_KP1
-            81 => two = true, // KEY_KP3
-            71 => three = true, // KEY_KP7
-            // 73 => four = true, // KEY_KP9
-            _ => {}
+            k if k == left_button => one = true,
+            k if k == right_button => two = true,
+            k if k == middle_button => three = true,
+            _ => (),
         }
     }
     (one, two, three)
@@ -207,6 +195,23 @@ fn main() -> std::io::Result<()> {
     let config_str = std::fs::read_to_string(cli.config.as_deref().unwrap_or("jemclicks.yaml"))?;
     let config = YamlLoader::load_from_str(&config_str).unwrap_or(vec![]);
 
+    // 43, KEY_BACKSLASH is set as a default key to enable/disable the program.
+    // This is not a good default, but it's the only key I could find that wouldn't disrupt too
+    // much a normal use of the keyboard.
+    let enable_key = config[0]["ENABLE_KEY"].as_i64().unwrap_or(43) as u16;
+    let disable_key = config[0]["DISABLE_KEY"].as_i64().unwrap_or(43) as u16;
+
+    // HJKL keys are used to move the mouse by default.
+    let left_key = config[0]["LEFT_KEY"].as_i64().unwrap_or(35) as u16;
+    let down_key = config[0]["DOWN_KEY"].as_i64().unwrap_or(36) as u16;
+    let up_key = config[0]["UP_KEY"].as_i64().unwrap_or(37) as u16;
+    let right_key = config[0]["RIGHT_KEY"].as_i64().unwrap_or(38) as u16;
+
+    // UIOP keys are used to click the mouse by default.
+    let left_button = config[0]["LEFT_BUTTON"].as_i64().unwrap_or(22) as u16;
+    let middle_button = config[0]["MIDDLE_BUTTON"].as_i64().unwrap_or(23) as u16;
+    let right_button = config[0]["RIGHT_BUTTON"].as_i64().unwrap_or(24) as u16;
+
     let mut d = pick_device();
     // println!("Keyboard: {}", d);
 
@@ -220,15 +225,16 @@ fn main() -> std::io::Result<()> {
     thread::spawn(move || {
         let mut grab = false;
         let mut grabbed = false;
+
         loop {
             for ev in d.fetch_events().unwrap() { // Blocks until an event is available
                 if ev.event_type() == evdev::EventType::KEY {
-                    if ev.code() == 183 && ev.value() == 1 {
+                    if ev.code() == enable_key && ev.value() == 1 {
                         let mut en = en_lock.lock().unwrap();
                         *en = true;
                         grab = true;
                     }
-                    if ev.code() == 16 && ev.value() == 1 {
+                    if ev.code() == disable_key && ev.value() == 0 {
                         let mut en = en_lock.lock().unwrap();
                         *en = false;
                         grab = false;
@@ -291,8 +297,8 @@ fn main() -> std::io::Result<()> {
         }
         drop(read_events);
 
-        let (up, down, left, right) = calc_directions(&pressed_keys);
-        let (left_click, right_click, middle_click) = calc_mouse(&pressed_keys);
+        let (up, down, left, right) = detect_directions(&pressed_keys, &up_key, &down_key, &left_key, &right_key);
+        let (left_click, right_click, middle_click) = detect_mouse(&pressed_keys, &left_button, &right_button, &middle_button);
 
         if up {
             if up_speed < mouse_speed { up_speed += speed_increment; }
