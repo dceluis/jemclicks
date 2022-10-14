@@ -201,10 +201,10 @@ fn main() -> std::io::Result<()> {
     let enable_key = config[0]["ENABLE_KEY"].as_i64().unwrap_or(43) as u16;
     let disable_key = config[0]["DISABLE_KEY"].as_i64().unwrap_or(43) as u16;
 
-    // HJKL keys are used to move the mouse by default.
-    let left_key = config[0]["LEFT_KEY"].as_i64().unwrap_or(35) as u16;
-    let down_key = config[0]["DOWN_KEY"].as_i64().unwrap_or(36) as u16;
-    let up_key = config[0]["UP_KEY"].as_i64().unwrap_or(37) as u16;
+    // IJKL keys are used to move the mouse by default.
+    let up_key = config[0]["UP_KEY"].as_i64().unwrap_or(23) as u16;
+    let left_key = config[0]["LEFT_KEY"].as_i64().unwrap_or(36) as u16;
+    let down_key = config[0]["DOWN_KEY"].as_i64().unwrap_or(37) as u16;
     let right_key = config[0]["RIGHT_KEY"].as_i64().unwrap_or(38) as u16;
 
     // UIOP keys are used to click the mouse by default.
