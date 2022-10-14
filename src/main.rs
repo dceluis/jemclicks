@@ -207,10 +207,10 @@ fn main() -> std::io::Result<()> {
     let down_key = config[0]["DOWN_KEY"].as_i64().unwrap_or(37) as u16;
     let right_key = config[0]["RIGHT_KEY"].as_i64().unwrap_or(38) as u16;
 
-    // UIOP keys are used to click the mouse by default.
-    let left_button = config[0]["LEFT_BUTTON"].as_i64().unwrap_or(22) as u16;
-    let middle_button = config[0]["MIDDLE_BUTTON"].as_i64().unwrap_or(23) as u16;
-    let right_button = config[0]["RIGHT_BUTTON"].as_i64().unwrap_or(24) as u16;
+    // SDF keys are used to click the mouse by default.
+    let left_button = config[0]["LEFT_BUTTON"].as_i64().unwrap_or(31) as u16;
+    let middle_button = config[0]["MIDDLE_BUTTON"].as_i64().unwrap_or(32) as u16;
+    let right_button = config[0]["RIGHT_BUTTON"].as_i64().unwrap_or(33) as u16;
 
     let mut d = pick_device();
     // println!("Keyboard: {}", d);
