@@ -215,7 +215,7 @@ fn main() -> std::io::Result<()> {
     let middle_button = config[0]["MIDDLE_BUTTON"].as_i64().unwrap_or(32) as u16;
     let right_button = config[0]["RIGHT_BUTTON"].as_i64().unwrap_or(33) as u16;
 
-    let mut d = pick_device();
+    let mut device = pick_device();
     // println!("Keyboard: {}", d);
 
     let enabled_lock = Arc::new(Mutex::new(false));
@@ -230,7 +230,7 @@ fn main() -> std::io::Result<()> {
         let mut grabbed = false;
 
         loop {
-            for ev in d.fetch_events().unwrap() { // Blocks until an event is available
+            for ev in device.fetch_events().unwrap() { // Blocks until an event is available
                 if ev.event_type() == evdev::EventType::KEY {
                     if ev.code() == enable_key && ev.value() == 1 {
                         let mut en = en_lock.lock().unwrap();
@@ -249,11 +249,11 @@ fn main() -> std::io::Result<()> {
             }
 
             if grab && !grabbed {
-                d.grab().unwrap();
+                device.grab().unwrap();
                 grabbed = true;
                 println!("Grabbed");
             } else if !grab && grabbed {
-                d.ungrab().unwrap();
+                device.ungrab().unwrap();
                 grabbed = false;
                 println!("Ungrabbed");
             }
