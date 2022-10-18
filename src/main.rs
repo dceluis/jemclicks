@@ -20,6 +20,9 @@ struct Cli {
 
     #[arg(short, long)]
     device: Option<String>,
+
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 fn pick_device() -> evdev::Device {
@@ -281,21 +284,28 @@ fn main() -> std::io::Result<()> {
     loop {
         thread::sleep(Duration::from_millis(sleep_ms));
 
+        // Turns [(12,2), (12,2), (13,1), (14,0)] into [12, 13]
+        // We could also do this in the listener loop above, instead.
+        let mut events = em_lock.write().unwrap();
+        for event in events.iter() {
+            let (code, value) = event;
+
+            if value == &0 {
+                pressed_keys.remove(code);
+            } else {
+                pressed_keys.insert(*code);
+            }
+        }
+        *events = Vec::new();
+        drop(events);
+
+        if cli.verbose {
+            println!("[debug] pressed_keys: {:?}", pressed_keys);
+        }
+
         if !*enm_lock.lock().unwrap() {
             continue;
         }
-
-        let read_events = em_lock.read().unwrap();
-        for event in read_events.iter() {
-            let (code, value) = event;
-
-            if value != &0 {
-                pressed_keys.insert(*code);
-            } else {
-                pressed_keys.remove(code);
-            }
-        }
-        drop(read_events);
 
         let (up, down, left, right) = detect_directions(&pressed_keys, &up_key, &down_key, &left_key, &right_key);
         let (left_click, right_click, middle_click) = detect_mouse(&pressed_keys, &left_button, &right_button, &middle_button);
@@ -331,10 +341,9 @@ fn main() -> std::io::Result<()> {
         x = right_speed - left_speed;
         y = down_speed - up_speed; // Invert y axis, because evdev is weird
 
-        println!("---");
-        println!("pressed_keys: {:?}", pressed_keys);
-        println!("x: {}, y: {}", x, y);
-        println!("");
+        if cli.verbose {
+            println!("[debug] x: {}, y: {}", x, y);
+        }
 
         write_btn_event(&v, left_click, middle_click, right_click).unwrap();
 
@@ -346,9 +355,5 @@ fn main() -> std::io::Result<()> {
         }
 
         write_syn(&v).unwrap();
-
-        // Clear the events queue
-        let mut write_events = em_lock.write().unwrap();
-        *write_events = Vec::new();
     }
 }
