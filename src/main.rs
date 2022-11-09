@@ -1,20 +1,24 @@
 extern crate yaml_rust;
 
-use yaml_rust::{YamlLoader};
+// use yaml_rust::{YamlLoader};
 
-use std::{thread, time::Duration};
-use std::sync::RwLock;
+use std::os::unix::fs::PermissionsExt;
+use std::{thread, time::Duration, path::Path, fs};
+use std::os::unix::net::UnixDatagram;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::collections::HashSet;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 use evdev_rs::enums::{BusType, EventCode, EventType, EV_KEY, EV_REL, EV_SYN};
-use evdev_rs::{DeviceWrapper, InputEvent, UInputDevice, UninitDevice, TimeVal};
+use evdev_rs::{Device, DeviceWrapper, InputEvent, UInputDevice, ReadFlag, UninitDevice, TimeVal, GrabMode};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     #[arg(short, long)]
     config: Option<String>,
 
@@ -25,33 +29,24 @@ struct Cli {
     verbose: bool,
 }
 
-fn pick_device() -> evdev::Device {
-    use std::io::prelude::*;
 
-    let mut chosen = String::new();
+#[derive(Subcommand)]
+enum Commands {
+    Enable,
+    Disable
+}
+
+fn print_devices() {
     let mut devices = evdev::enumerate().map(|t| t.1).collect::<Vec<_>>();
     // readdir returns them in reverse order from their eventN names for some reason
     devices.reverse();
 
-    let cli = Cli::parse();
-    if let Some(dev_file) = cli.device {
-        chosen = dev_file;
-    } else {
-        for (i, d) in devices.iter().enumerate() {
-            println!("{}: {}", i, d.name().unwrap_or("Unnamed device"));
-        }
-        print!("Select the device [0-{}]: ", devices.len());
-        let _ = std::io::stdout().flush();
-        std::io::stdin().read_line(&mut chosen).unwrap();
+    for (i, d) in devices.iter().enumerate() {
+        println!("{}: {}", i, d.name().unwrap_or("Unnamed device"));
     }
-
-    println!("Using device {}", chosen);
-    let n = chosen.trim().parse::<usize>().unwrap();
-    devices.into_iter().nth(n).unwrap()
 }
 
-fn detect_directions(keycodes: &HashSet<u16>, up_key: &u16, down_key: &u16, left_key: &u16, right_key: &u16) -> (bool, bool, bool, bool) {
-    // Keycodes are defined in /usr/include/linux/input-event-codes.h
+fn detect_directions(keycodes: &HashSet<EventCode>, up_key: &EventCode, down_key: &EventCode, left_key: &EventCode, right_key: &EventCode) -> (bool, bool, bool, bool) {
     let mut up = false;
     let mut down = false;
     let mut left = false;
@@ -70,7 +65,7 @@ fn detect_directions(keycodes: &HashSet<u16>, up_key: &u16, down_key: &u16, left
     (up, down, left, right)
 }
 
-fn detect_mouse(keycodes: &HashSet<u16>, left_button: &u16, right_button: &u16, middle_button: &u16) -> (bool, bool, bool) {
+fn detect_mouse(keycodes: &HashSet<EventCode>, left_button: &EventCode, right_button: &EventCode, middle_button: &EventCode) -> (bool, bool, bool) {
     let mut one = false;
     let mut two = false;
     let mut three = false;
@@ -192,168 +187,212 @@ fn write_event(device: &UInputDevice, event: InputEvent) {
 fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
 
-    println!("config: {:?}", cli.config.as_deref());
-    println!("device: {:?}", cli.device.as_deref());
+    match &cli.command {
+        Some(Commands::Enable) => {
+            println!("Enabling mouse keys");
+            let socket = UnixDatagram::unbound()?;
+            socket.send_to(b"enable", "/tmp/jemclicks.sock")?;
+            std::process::exit(0);
+        }
+        Some(Commands::Disable) => {
+            println!("Disabling mouse keys");
+            let socket = UnixDatagram::unbound()?;
+            socket.send_to(b"disable", "/tmp/jemclicks.sock")?;
+            std::process::exit(0);
+        }
+        None => {
+            if cli.device.is_none() {
+                print_devices();
 
-    let config_str = std::fs::read_to_string(cli.config.as_deref().unwrap_or("jemclicks.yaml"))?;
-    let config = YamlLoader::load_from_str(&config_str).unwrap_or(vec![]);
+                std::process::exit(0);
+            }
 
-    // 43, KEY_BACKSLASH is set as a default key to enable/disable the program.
-    // This is not a good default, but it's the only key I could find that wouldn't disrupt too
-    // much a normal use of the keyboard.
-    let enable_key = config[0]["ENABLE_KEY"].as_i64().unwrap_or(43) as u16;
-    let disable_key = config[0]["DISABLE_KEY"].as_i64().unwrap_or(43) as u16;
+            println!("config: {:?}", cli.config.as_deref());
+            println!("device: {:?}", cli.device.as_deref());
 
-    // IJKL keys are used to move the mouse by default.
-    let up_key = config[0]["UP_KEY"].as_i64().unwrap_or(23) as u16;
-    let left_key = config[0]["LEFT_KEY"].as_i64().unwrap_or(36) as u16;
-    let down_key = config[0]["DOWN_KEY"].as_i64().unwrap_or(37) as u16;
-    let right_key = config[0]["RIGHT_KEY"].as_i64().unwrap_or(38) as u16;
+            // let config_str = fs::read_to_string(cli.config.as_deref().unwrap_or("jemclicks.yaml"))?;
 
-    // SDF keys are used to click the mouse by default.
-    let left_button = config[0]["LEFT_BUTTON"].as_i64().unwrap_or(31) as u16;
-    let middle_button = config[0]["MIDDLE_BUTTON"].as_i64().unwrap_or(32) as u16;
-    let right_button = config[0]["RIGHT_BUTTON"].as_i64().unwrap_or(33) as u16;
+            // TODO: Make config work again
+            // let config = YamlLoader::load_from_str(&config_str).unwrap_or(vec![]);
 
-    let mut device = pick_device();
-    // println!("Keyboard: {}", d);
+            let quit_key = EventCode::EV_KEY(EV_KEY::KEY_ESC);
+            // IJKL keys are used to move the mouse by default.
+            // let up_key = config[0]["UP_KEY"].as_i64().unwrap_or(23) as u16;
+            // let left_key = config[0]["LEFT_KEY"].as_i64().unwrap_or(36) as u16;
+            // let down_key = config[0]["DOWN_KEY"].as_i64().unwrap_or(37) as u16;
+            // let right_key = config[0]["RIGHT_KEY"].as_i64().unwrap_or(38) as u16;
 
-    let enabled_lock = Arc::new(Mutex::new(false));
-    let events_queue: Vec<(u16, i32)> = Vec::new();
-    let queue_lock = Arc::new(RwLock::new(events_queue));
+            // SDF keys are used to click the mouse by default.
+            // let left_button = config[0]["LEFT_BUTTON"].as_i64().unwrap_or(31) as u16;
+            // let middle_button = config[0]["MIDDLE_BUTTON"].as_i64().unwrap_or(32) as u16;
+            // let right_button = config[0]["RIGHT_BUTTON"].as_i64().unwrap_or(33) as u16;
 
-    // Spawn a thread to read the keyboard
-    let ec_lock = Arc::clone(&queue_lock);
-    let en_lock = Arc::clone(&enabled_lock);
-    thread::spawn(move || {
-        let mut grab = false;
-        let mut grabbed = false;
+            // IJKL keys are used to move the mouse by default.
+            let up_key = EventCode::EV_KEY(EV_KEY::KEY_I);
+            let left_key = EventCode::EV_KEY(EV_KEY::KEY_J);
+            let down_key = EventCode::EV_KEY(EV_KEY::KEY_K);
+            let right_key = EventCode::EV_KEY(EV_KEY::KEY_L);
 
-        loop {
-            for ev in device.fetch_events().unwrap() { // Blocks until an event is available
-                if ev.event_type() == evdev::EventType::KEY {
-                    if ev.code() == enable_key && ev.value() == 1 {
-                        let mut en = en_lock.lock().unwrap();
-                        *en = true;
-                        grab = true;
+            // SDF keys are used to click the mouse by default.
+            let left_button = EventCode::EV_KEY(EV_KEY::KEY_S);
+            let middle_button = EventCode::EV_KEY(EV_KEY::KEY_D);
+            let right_button = EventCode::EV_KEY(EV_KEY::KEY_F);
+
+            let mut d = Device::new_from_path("/dev/input/event".to_string() + &cli.device.unwrap())?;
+
+            if let Some(n) = d.name() {
+                println!("Connected to device: '{}' ({:04x}:{:04x})", n, d.vendor_id(), d.product_id());
+            }
+
+            let v = init_uinput_device()?;
+
+            // Configurables
+            let freq = 90;
+            let ramp_ms = 200;
+            let movement_per_s = 500;
+
+            let sleep_ms = 1000 / freq;
+            let steps = (ramp_ms as f32 / sleep_ms as f32).ceil() as i32;
+            let mouse_speed = movement_per_s as f32 / freq as f32;
+            let speed_increment = mouse_speed / steps as f32;
+            println!("steps: {}, mouse_speed_tick: {}, speed_increment: {}", steps, mouse_speed, speed_increment);
+
+            let mut x: i32;
+            let mut y: i32;
+
+            let mut up_speed = 0.0;
+            let mut down_speed = 0.0;
+            let mut left_speed = 0.0;
+            let mut right_speed = 0.0;
+
+            let mut pressed_keys = HashSet::new();
+            let mut grabbed = false;
+            let enabled_lock = Arc::new(Mutex::new(false));
+
+            let e_lock = Arc::clone(&enabled_lock);
+            thread::spawn(move || {
+                let socket_path = Path::new("/tmp/jemclicks.sock");
+
+                // Delete old socket if necessary
+                if socket_path.exists() {
+                    fs::remove_file(&socket_path).unwrap();
+                }
+
+                let socket = UnixDatagram::bind(socket_path).unwrap();
+                fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o777)).unwrap();
+
+                let mut buf = vec![0; 1024];
+                loop {
+                    let result = socket.recv(buf.as_mut_slice()).expect("Failed to receive data");
+                    let received = &buf[..result];
+                    let received = String::from_utf8_lossy(received);
+                    println!("Received: {:?}", received);
+
+                    if received == "enable" {
+                        let mut enabled = e_lock.lock().unwrap();
+                        *enabled = true;
+                    } else if received == "disable" {
+                        let mut enabled = e_lock.lock().unwrap();
+                        *enabled = false;
                     }
-                    if ev.code() == disable_key && ev.value() == 0 {
-                        let mut en = en_lock.lock().unwrap();
-                        *en = false;
-                        grab = false;
+                }
+            });
+
+            let e_lock_2 = Arc::clone(&enabled_lock);
+            loop {
+                thread::sleep(Duration::from_millis(sleep_ms));
+
+                let mut enabled = e_lock_2.lock().unwrap();
+
+                if *enabled {
+                    if !grabbed {
+                        d.grab(GrabMode::Grab).unwrap();
+                        grabbed = true;
                     }
-                    // Record key press to be processed by main loop
-                    let mut _es = ec_lock.write().unwrap();
-                    _es.push((ev.code(), ev.value()));
+
+                    let next_event = d.next_event(ReadFlag::NORMAL);
+                    match next_event {
+                        Ok((_, event)) => {
+                            // println!("event: {:?} {:?}", event.event_code, event.value);
+                            let event_type = event.event_type().unwrap_or(EventType::EV_SYN);
+                            if event_type == EventType::EV_KEY {
+                                if event.value == 0 {
+                                    pressed_keys.remove(&event.event_code);
+                                } else {
+                                    pressed_keys.insert(event.event_code);
+                                }
+                            }
+                        },
+                        Err(_e) => {
+                            // println!("Error: {}", _e);
+                        }
+                    }
+
+                    if cli.verbose {
+                        println!("[debug] pressed_keys: {:?}", pressed_keys);
+                    }
+
+                    if pressed_keys.contains(&quit_key) {
+                        *enabled = false;
+                        drop(enabled);
+                        continue;
+                    }
+
+                    let (up, down, left, right) = detect_directions(&pressed_keys, &up_key, &down_key, &left_key, &right_key);
+                    let (left_click, right_click, middle_click) = detect_mouse(&pressed_keys, &left_button, &right_button, &middle_button);
+
+                    if up {
+                        if up_speed < mouse_speed { up_speed += speed_increment; }
+                    } else {
+                        if up_speed > 0.0 { up_speed -= speed_increment; }
+                        if up_speed < 0.0 { up_speed = 0.0; }
+                    }
+
+                    if down {
+                        if down_speed < mouse_speed { down_speed += speed_increment; }
+                    } else {
+                        if down_speed > 0.0 { down_speed -= speed_increment; }
+                        if down_speed < 0.0 { down_speed = 0.0; }
+                    }
+
+                    if left {
+                        if left_speed < mouse_speed { left_speed += speed_increment; }
+                    } else {
+                        if left_speed > 0.0 { left_speed -= speed_increment; }
+                        if left_speed < 0.0 { left_speed = 0.0; }
+                    }
+
+                    if right {
+                        if right_speed < mouse_speed { right_speed += speed_increment; }
+                    } else {
+                        if right_speed > 0.0 { right_speed -= speed_increment; }
+                        if right_speed < 0.0 { right_speed = 0.0; }
+                    }
+
+                    x = (right_speed - left_speed) as i32;
+                    y = (down_speed - up_speed) as i32; // Invert y axis, because evdev is weird
+
+                    if cli.verbose {
+                        println!("[debug] x: {}, y: {}", x, y);
+                    }
+
+                    write_btn_event(&v, left_click, middle_click, right_click).unwrap();
+
+                    if x != 0 {
+                        write_x_input_event(&v, x)?;
+                    }
+                    if y != 0 {
+                        write_y_input_event(&v, y)?;
+                    }
+
+                    write_syn(&v).unwrap();
+                } else {
+                    if grabbed {
+                        d.grab(GrabMode::Ungrab).unwrap();
+                        grabbed = false;
+                    }
                 }
             }
-
-            if grab && !grabbed {
-                device.grab().unwrap();
-                grabbed = true;
-                println!("Grabbed");
-            } else if !grab && grabbed {
-                device.ungrab().unwrap();
-                grabbed = false;
-                println!("Ungrabbed");
-            }
         }
-    });
-
-
-    let v = init_uinput_device()?;
-
-    let freq = 30;
-    let ramp_ms = 200; // seconds
-    let sleep_ms = 1000 / freq;
-    let steps = (ramp_ms as f32 / sleep_ms as f32).ceil() as i32;
-    let mouse_speed = 16;
-    let speed_increment = (mouse_speed as f32 / steps as f32) as i32;
-
-    let mut pressed_keys = HashSet::new();
-    let mut x: i32;
-    let mut y: i32;
-
-    let mut up_speed = 0;
-    let mut down_speed = 0;
-    let mut left_speed = 0;
-    let mut right_speed = 0;
-
-    let em_lock = Arc::clone(&queue_lock);
-    let enm_lock = Arc::clone(&enabled_lock);
-    loop {
-        thread::sleep(Duration::from_millis(sleep_ms));
-
-        // Turns [(12,2), (12,2), (13,1), (14,0)] into [12, 13]
-        // We could also do this in the listener loop above, instead.
-        let mut events = em_lock.write().unwrap();
-        for event in events.iter() {
-            let (code, value) = event;
-
-            if value == &0 {
-                pressed_keys.remove(code);
-            } else {
-                pressed_keys.insert(*code);
-            }
-        }
-        *events = Vec::new();
-        drop(events);
-
-        if cli.verbose {
-            println!("[debug] pressed_keys: {:?}", pressed_keys);
-        }
-
-        if !*enm_lock.lock().unwrap() {
-            continue;
-        }
-
-        let (up, down, left, right) = detect_directions(&pressed_keys, &up_key, &down_key, &left_key, &right_key);
-        let (left_click, right_click, middle_click) = detect_mouse(&pressed_keys, &left_button, &right_button, &middle_button);
-
-        if up {
-            if up_speed < mouse_speed { up_speed += speed_increment; }
-        } else {
-            if up_speed > 0 { up_speed -= speed_increment; }
-            if up_speed < 0 { up_speed = 0; }
-        }
-
-        if down {
-            if down_speed < mouse_speed { down_speed += speed_increment; }
-        } else {
-            if down_speed > 0 { down_speed -= speed_increment; }
-            if down_speed < 0 { down_speed = 0; }
-        }
-
-        if left {
-            if left_speed < mouse_speed { left_speed += speed_increment; }
-        } else {
-            if left_speed > 0 { left_speed -= speed_increment; }
-            if left_speed < 0 { left_speed = 0; }
-        }
-
-        if right {
-            if right_speed < mouse_speed { right_speed += speed_increment; }
-        } else {
-            if right_speed > 0 { right_speed -= speed_increment; }
-            if right_speed < 0 { right_speed = 0; }
-        }
-
-        x = right_speed - left_speed;
-        y = down_speed - up_speed; // Invert y axis, because evdev is weird
-
-        if cli.verbose {
-            println!("[debug] x: {}, y: {}", x, y);
-        }
-
-        write_btn_event(&v, left_click, middle_click, right_click).unwrap();
-
-        if x != 0 {
-            write_x_input_event(&v, x)?;
-        }
-        if y != 0 {
-            write_y_input_event(&v, y)?;
-        }
-
-        write_syn(&v).unwrap();
     }
 }
