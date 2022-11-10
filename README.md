@@ -81,16 +81,18 @@ My original use case was to use a foot pedal as the toggle, a-la vim-clutch. I'm
 
 # Default keybindings
 
-Up: `I`
-Left: `J`
-Down: `K`
-Left: `L`
+* Up: `I`
+* Left: `J`
+* Down: `K`
+* Left: `L`
 
-Left-click: `S`
-Middle-click: `D`
-Right-click: `F`
 
-Quit: `Q`
+* Left-click: `S`
+* Middle-click: `D`
+* Right-click: `F`
+
+
+* Quit: `Q`
 
 # Notes
 
