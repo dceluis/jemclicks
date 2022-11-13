@@ -2,14 +2,12 @@
 
 # Installation
 
-```
-cargo build src/main.rs
-```
+Download and extract the latest release from [here](https://github.com/dceluis/jemclicks/releases).
 
-and then copy the binary to your bin path
+Then, copy the `bin/jemclicks` binary into a folder in your executable PATH (I use $HOME/bin).
 
 ```
-cp target/debug/jemclicks ~/bin/
+cp ./bin/jemclicks ~/bin/
 ```
 
 # Usage
@@ -53,7 +51,7 @@ bindsym $mod4+z exec jemclicks disable
 
 Note: You can also disable the jemclicks mouse with the `quit` button, see below for the default key bindings.
 
-My original use case was to use a foot pedal as the toggle, a-la vim-clutch. I'm using kmonad to remap the pedal, with the following configuration:
+My original use case was to use a foot pedal as the toggle, a-la [vim-clutch](https://github.com/alevchuk/vim-clutch). I'm using kmonad to remap the pedal, with the following configuration:
 
 ```
 (defcfg
@@ -97,3 +95,15 @@ My original use case was to use a foot pedal as the toggle, a-la vim-clutch. I'm
 # Notes
 
 * The configuration file is not currently functional. If you want to change the keybindings, you can edit the src file and build the executable again.
+
+# Building
+
+```
+cargo build ./src/main.rs
+```
+
+and then copy the built binary to your executable path
+
+```
+cp ./target/debug/jemclicks ~/bin/
+```
